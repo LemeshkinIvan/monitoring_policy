@@ -1,0 +1,8 @@
+{
+    "blacklist":[
+        "telegram.exe"
+    ],
+    "time_cfg_request": "30s",
+    "time_idle": "5s",
+    "log_path":"../cfg/cfg.json"
+}
