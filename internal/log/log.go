@@ -2,8 +2,11 @@ package log
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"time"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type LogLevel string
@@ -21,11 +24,14 @@ const RED Color = "\033[31m"
 const Close string = "\033[0m"
 
 type Logger struct {
-	timeMask         string
-	DefaultLogFolder string
-	DefaultNameFile  string
-	IsDebug          bool
-	EnableWriteLog   bool
+	timeMask       string
+	LogFolder      string
+	NameFile       string
+	IsDebug        bool
+	EnableWriteLog bool
+
+	Writer io.Writer
+	Ch     chan string
 }
 
 type LoggerCfg struct {
@@ -40,6 +46,13 @@ func NewLogger(cfg LoggerCfg) (*Logger, error) {
 		cfg.NameFile = "app.log"
 	}
 
+	l := &Logger{
+		timeMask:       "02-01-2006 15:04:05",
+		NameFile:       cfg.NameFile,
+		IsDebug:        cfg.IsDebug,
+		EnableWriteLog: cfg.EnableWriteLog,
+	}
+
 	if cfg.EnableWriteLog {
 		// create folder and open file
 		if cfg.LogFolder == "" {
@@ -50,19 +63,65 @@ func NewLogger(cfg LoggerCfg) (*Logger, error) {
 
 			cfg.LogFolder = path
 		}
+
+		l.LogFolder = cfg.LogFolder
+
+		err := l.InitLogFolder()
+		if err != nil {
+			return nil, err
+		}
+
+		l.Writer = &lumberjack.Logger{
+			Filename:   l.LogFolder + "\\" + l.NameFile,
+			MaxSize:    10, // MB
+			MaxBackups: 5,
+			MaxAge:     7,    // дней
+			Compress:   true, // gzip
+		}
 	}
 
-	return &Logger{
-		timeMask:         "02-01-2006 15:04:05",
-		DefaultLogFolder: cfg.LogFolder,
-		DefaultNameFile:  cfg.NameFile,
-		IsDebug:          cfg.IsDebug,
-		EnableWriteLog:   cfg.EnableWriteLog,
-	}, nil
+	l.Ch = make(chan string, 100)
+	l.listen()
+
+	return l, nil
 }
 
-var logChan = make(chan string, 100) // буфер!
-var name = os.Getenv("USERNAME")
+func (l *Logger) listen() {
+	for msg := range l.Ch {
+		if l.Writer == nil {
+			continue
+		}
+
+		_, err := l.Writer.Write([]byte(msg + "\n"))
+		if err != nil {
+			l.WriteToStdOut(err.Error(), string(WARN))
+		}
+	}
+}
+
+func (l *Logger) Close() {
+	if l.EnableWriteLog {
+		close(l.Ch)
+	}
+}
+
+func (l *Logger) InitLogFolder() error {
+	var path string
+	var name = os.Getenv("USERNAME")
+
+	// create folder
+	if len(l.LogFolder) == 0 {
+		path = fmt.Sprintf(l.LogFolder, name)
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
 
 func (l *Logger) Log(msg string, level LogLevel) {
 	if level == "" {
@@ -78,15 +137,25 @@ func (l *Logger) Log(msg string, level LogLevel) {
 	case FATAL:
 		header = string(RED) + string(FATAL) + Close
 	default:
+		header = string(BLUE) + string(INFO) + Close
 	}
 
 	if l.IsDebug {
-		fmt.Println(l.formatMsg(msg, header))
+		l.WriteToStdOut(msg, header)
 	}
 
 	if l.EnableWriteLog {
-		//fmt.Println(l.formatMsg(rawMsg))
+		select {
+		case l.Ch <- l.formatMsg(msg, header):
+		default:
+			// канал переполнен — не блокируемся
+			l.WriteToStdOut("log channel overflow", string(YELLOW)+string(WARN)+Close)
+		}
 	}
+}
+
+func (l *Logger) WriteToStdOut(msg string, header string) {
+	fmt.Println(l.formatMsg(msg, header))
 }
 
 func (l *Logger) formatMsg(raw string, header string) string {
@@ -98,38 +167,4 @@ func (l *Logger) formatMsg(raw string, header string) string {
 	}
 	msg += " " + raw
 	return msg
-}
-
-func (l *Logger) LogInFile(fileName string) {
-	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-
-	for msg := range logChan {
-		file.WriteString(msg + "\n")
-	}
-}
-
-func (l *Logger) CreateLogFolder(path string) error {
-	if len(path) == 0 {
-		path = fmt.Sprintf(l.DefaultLogFolder, name)
-	}
-
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.MkdirAll(path, 0755); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (l *Logger) CreateLogFile() error {
-	_, err := os.Create(l.DefaultLogFolder + "\\" + l.DefaultNameFile)
-	if err != nil {
-		return err
-	}
-	return nil
 }

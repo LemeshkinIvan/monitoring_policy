@@ -10,7 +10,6 @@ type WindowsProcess struct {
 }
 
 type WatcherInit struct {
-	Log       *log.Logger
-	IsDebug   bool
-	Blacklist []string
+	Log     *log.Logger
+	IsDebug bool
 }

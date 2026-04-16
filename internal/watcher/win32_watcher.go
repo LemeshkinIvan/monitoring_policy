@@ -20,7 +20,6 @@ type Win32Watcher struct {
 	Logger    *log.Logger
 	IsDebug   bool
 	protected []string
-	Blacklist []string
 }
 
 func NewWin32Watcher(cfg WatcherInit) (*Win32Watcher, error) {
@@ -28,14 +27,9 @@ func NewWin32Watcher(cfg WatcherInit) (*Win32Watcher, error) {
 		return nil, ErrLogNullable
 	}
 
-	if len(cfg.Blacklist) == 0 {
-		return nil, ErrBlacklistLen
-	}
-
 	return &Win32Watcher{
-		Logger:    cfg.Log,
-		IsDebug:   cfg.IsDebug,
-		Blacklist: cfg.Blacklist,
+		Logger:  cfg.Log,
+		IsDebug: cfg.IsDebug,
 		protected: []string{
 			"System32",
 			"SystemApps",
@@ -50,7 +44,11 @@ func (w *Win32Watcher) CloseSnapshot(handle windows.Handle) error {
 	return windows.CloseHandle(handle)
 }
 
-func (w *Win32Watcher) StartWatcherWin32() error {
+func (w *Win32Watcher) StartWatcherWin32(blacklist []string) error {
+	if len(blacklist) == 0 {
+		return ErrBlacklistLen
+	}
+
 	snapshot, err := w.GetSnapshot()
 	if err != nil {
 		return err
@@ -99,7 +97,7 @@ func (w *Win32Watcher) StartWatcherWin32() error {
 			continue
 		}
 
-		for _, j := range w.Blacklist {
+		for _, j := range blacklist {
 			if strings.EqualFold(i.Name, j) {
 				if err := w.killProcess(i.ProcessID); err != nil {
 					if w.IsDebug {
